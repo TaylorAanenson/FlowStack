@@ -27,6 +27,11 @@ struct PathContext: Equatable, Hashable {
     var anchor: Anchor<CGRect>?
     var overrideAnchor: Anchor<CGRect>?
 
+    /// Shared across copies of this context — the zoom modifier writes the
+    /// resolved transition geometry here for the destination to read (see
+    /// FlowZoomGeometry)
+    var zoomGeometryBox = ZoomGeometryBox()
+
     var snapshot: UIImage?
     var snapshotDict: [ColorScheme: UIImage] = [:]
     var linkDepth: Int = 0

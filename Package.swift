@@ -12,16 +12,15 @@ let package = Package(
             name: "FlowStack",
             targets: ["FlowStack"]),
     ],
-    dependencies: [
-        // Dependencies declare other packages that this package depends on.
-        .package(url: "https://github.com/lorenzofiamingo/swiftui-cached-async-image.git", from: "2.1.0"),
-    ],
     targets: [
         // Targets are the basic building blocks of a package. A target can define a module or a test suite.
         // Targets can depend on other targets in this package, and on products in packages this package depends on.
+        // NB: the swiftui-cached-async-image dependency was dropped — the library
+        // never imports it (it was only a README recommendation, used by the
+        // example app) and its 2.1.2 manifest doesn't compile, which froze
+        // dependency resolution for every consumer.
         .target(
-            name: "FlowStack",
-            dependencies: [.product(name: "CachedAsyncImage", package: "swiftui-cached-async-image")]),
+            name: "FlowStack"),
         .testTarget(
             name: "FlowStackTests",
             dependencies: ["FlowStack"]),

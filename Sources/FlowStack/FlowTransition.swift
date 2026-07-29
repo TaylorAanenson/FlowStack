@@ -14,6 +14,64 @@ extension EnvironmentValues {
     }
 }
 
+/// Live progress of the flow zoom, published to the presented destination
+/// via `\.flowZoomGeometry`. The percent cannot be delivered through the
+/// environment directly — environment writes inside the animatable
+/// transition modifier never reach the transitioned content, and the
+/// modifier is removed entirely once the transition settles — so it
+/// travels in a shared reference box the zoom modifier writes every
+/// animation frame. Sample it from an `onGeometryChange` on the
+/// destination's root: the zoom animates the destination's layout, so the
+/// height change is a per-frame trigger that fires exactly when this value
+/// is fresh (and once more on settle, after the modifier's final write
+/// of 1).
+public struct FlowZoomGeometry: Equatable {
+    let box: ZoomGeometryBox
+
+    public static func == (lhs: FlowZoomGeometry, rhs: FlowZoomGeometry) -> Bool {
+        lhs.box === rhs.box
+    }
+
+    /// Zoom progress: 0 = collapsed onto the anchor card, 1 = fully
+    /// presented (clamped — the settle spring can overshoot 1 briefly)
+    public var percent: CGFloat { min(1, max(0, box.percent)) }
+
+    /// Opacity of the anchor snapshot FlowStack draws over the destination —
+    /// it dissolves across the zoom's first fifth. A destination hero that
+    /// renders at `1 - snapshotOpacity(at: percent)` crossfades with the
+    /// snapshot exactly: the pair always sums to full opacity, so the
+    /// handoff never flashes blank and never double-exposes.
+    public static func snapshotOpacity(at percent: CGFloat) -> CGFloat {
+        max(0, 1 - percent / 0.2)
+    }
+}
+
+/// Shared by every copy of a presentation's PathContext. Identity-hashable
+/// so PathContext keeps its synthesized conformances.
+final class ZoomGeometryBox: Equatable, Hashable {
+    var percent: CGFloat = 0
+
+    static func == (lhs: ZoomGeometryBox, rhs: ZoomGeometryBox) -> Bool {
+        lhs === rhs
+    }
+
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(ObjectIdentifier(self))
+    }
+}
+
+struct FlowZoomGeometryKey: EnvironmentKey {
+    static let defaultValue: FlowZoomGeometry? = nil
+}
+
+public extension EnvironmentValues {
+    /// Present on destinations pushed through a FlowStack; nil elsewhere.
+    var flowZoomGeometry: FlowZoomGeometry? {
+        get { self[FlowZoomGeometryKey.self] }
+        set { self[FlowZoomGeometryKey.self] = newValue }
+    }
+}
+
 struct OpacityTransitionKey: EnvironmentKey {
     static let defaultValue: CGFloat = 0
 }
@@ -166,6 +224,13 @@ extension AnyTransition {
             GeometryReader { proxy in
                 let zoomRect = zoomRect(with: proxy, anchor: context.overrideAnchor ?? context.anchor, percent: percent, pullOffset: panOffset)
                 let scaleRatio = context.shouldScaleHorizontally ? zoomRect.size.width / proxy.size.width : 1.0
+
+                // Deposit the live percent where the destination can reach
+                // it (see FlowZoomGeometry) — this body runs once per
+                // animation frame with the interpolated value, and its final
+                // evaluation before removal lands exactly on the identity
+                // value, so the box reads 1 whenever the view is settled
+                let _ = { context.zoomGeometryBox.percent = percent }()
 
                 content
                     .onInteractiveDismissGesture(threshold: 80, isEnabled: !isDisabled, isDismissing: isDismissing, swipeUpToDismiss: context.swipeUpToDismiss, onDismiss: {

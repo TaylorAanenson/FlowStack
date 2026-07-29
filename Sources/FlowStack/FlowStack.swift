@@ -310,6 +310,10 @@ public struct FlowStack<Root: View, Overlay: View>: View {
 
                     destination.content(element.value)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        // Structural write on purpose: environment set inside
+                        // the transition modifier never reaches the content,
+                        // so the geometry travels in a shared box instead
+                        .environment(\.flowZoomGeometry, (element.context).map { FlowZoomGeometry(box: $0.zoomGeometryBox) })
                         .id(element.hashValue)
                         .transition(.flowTransition(with: element.context ?? .init()))
                         .modifier(AccessibilityModifier(element: element.index))
