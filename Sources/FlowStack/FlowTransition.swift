@@ -14,6 +14,28 @@ extension EnvironmentValues {
     }
 }
 
+private struct FlowSnapshotRenderKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+public extension EnvironmentValues {
+    /// True only while a flow link's contents are being rasterised into the
+    /// transition snapshot (`FlowLink.createSnapshot`).
+    ///
+    /// The snapshot is taken by rendering the link's label into an offscreen
+    /// hosting controller and calling `drawHierarchy`, which captures only
+    /// what Core Animation can draw in process. Content that composites out
+    /// of process -- a `WKWebView` playing video is the case this exists for
+    /// -- comes back as a black rectangle, and that bitmap is what the reader
+    /// sees for the length of the transition while the real link is held at
+    /// zero opacity. A view that knows it has such content can watch this and
+    /// draw its still image instead.
+    var flowSnapshotRender: Bool {
+        get { self[FlowSnapshotRenderKey.self] }
+        set { self[FlowSnapshotRenderKey.self] = newValue }
+    }
+}
+
 /// Live progress of the flow zoom, published to the presented destination
 /// via `\.flowZoomGeometry`. The percent cannot be delivered through the
 /// environment directly — environment writes inside the animatable

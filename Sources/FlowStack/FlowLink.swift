@@ -330,6 +330,10 @@ public struct FlowLink<Label>: View where Label: View {
         let frame = CGRect(origin: .zero, size: size)
         environment = fetchedEnvironment
         environment.colorScheme = colorScheme
+        // Set ON the copy, not chained outside it: `.environment(\.self,)`
+        // below is the innermost write and replaces the whole environment
+        // for the label, so a modifier applied after it never lands
+        environment.flowSnapshotRender = true
 
         let controller = UIHostingController(
             rootView: label()
