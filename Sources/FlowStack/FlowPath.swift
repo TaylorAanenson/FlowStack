@@ -47,6 +47,10 @@ struct PathContext: Equatable, Hashable {
     var shouldScaleHorizontally: Bool = true
 
     var swipeUpToDismiss: Bool = false
+
+    /// Set on a split pane's presentation that's about to be replaced: it
+    /// fades under its successor instead of zooming back to its link
+    var leavesBeneathReplacement: Bool = false
 }
 
 struct FlowElement: Equatable, Hashable {
@@ -97,6 +101,16 @@ public struct FlowPath: Equatable, Hashable {
 
     mutating func append<P>(_ newElement: P, context: PathContext?) where P: Hashable {
         self.elements.append(.init(value: newElement, context: context, index: elements.count))
+    }
+
+    /// Marks every element to leave beneath whatever replaces it (see
+    /// `PathContext.leavesBeneathReplacement`)
+    mutating func markForReplacement() {
+        for index in elements.indices {
+            var context = elements[index].context ?? PathContext()
+            context.leavesBeneathReplacement = true
+            elements[index].context = context
+        }
     }
 
     /// Adds a new element at the end of the flow path.

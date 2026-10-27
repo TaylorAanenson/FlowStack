@@ -169,6 +169,7 @@ extension AnyTransition {
         @Environment(\.flowDismiss) var dismiss
         @Environment(\.flowTransaction) var transaction
         @Environment(\.horizontalSizeClass) var horizontalSizeClass
+        @Environment(\.flowSplitPane) var inSplitPane
 
         private var activeSnapshot: UIImage? {
             context.snapshotDict[colorScheme] ?? context.snapshot
@@ -176,8 +177,10 @@ extension AnyTransition {
 
         var cornerRadius: CGFloat { context.cornerRadius + ((UIScreen.displayCornerRadius ?? 20) - context.cornerRadius) * percent }
 
+        /// A split pane is always filled, whatever the size class — the
+        /// floating card is for a view that covers the whole stack
         var isPresentedFullscreen: Bool {
-            horizontalSizeClass == .compact || availableSize.width - 2 * Constants.minVerticalPadding < Constants.maxWidth
+            inSplitPane || horizontalSizeClass == .compact || availableSize.width - 2 * Constants.minVerticalPadding < Constants.maxWidth
         }
 
         var conditionalCornerRadius: CGFloat {
@@ -233,7 +236,7 @@ extension AnyTransition {
 
         private func presentationSize(availableSize: CGSize) -> CGSize {
 
-            if horizontalSizeClass == .regular && availableSize.width - 2 * Constants.minVerticalPadding >= Constants.maxWidth {
+            if !inSplitPane && horizontalSizeClass == .regular && availableSize.width - 2 * Constants.minVerticalPadding >= Constants.maxWidth {
                 let width = Constants.maxWidth
                 let height = min(Constants.maxHeight, availableSize.height - Constants.minVerticalPadding * 2)
                 return CGSize(width: width, height: height)
@@ -300,7 +303,10 @@ extension AnyTransition {
                     )
                     .opacity(context.anchor == nil ? percent : 1)
             }
-            .ignoresSafeArea(.container, edges: .all)
+            // In a split pane the trailing side is where bars and the status
+            // bar stand on a wide display (a foldable's inner screen), so
+            // the pane stops at them instead of running underneath
+            .ignoresSafeArea(.container, edges: inSplitPane ? .vertical : .all)
         }
     }
 }

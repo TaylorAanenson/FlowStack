@@ -269,6 +269,7 @@ public struct FlowLink<Label>: View where Label: View {
 
     @Environment(\.flowPath) private var path
     @Environment(\.flowDepth) private var flowDepth
+    @Environment(\.flowSplitRoot) private var splitRoot
     @Environment(\.flowTransaction) private var transaction
     @Environment(\.flowAnimationDuration) private var flowDuration
 
@@ -386,10 +387,21 @@ public struct FlowLink<Label>: View where Label: View {
         return croppedImage
     }
 
+    /// A link on a split stack's root opens into the pane beside it, which
+    /// holds one presentation at a time
+    private var replacesPane: Bool {
+        splitRoot && flowDepth == 0
+    }
+
     private func trigger() {
-        buttonPressed = true
-        // check for sibling elements and return early if we already have a presented element at this depth
-        guard !hasSiblingElement else { return }
+        if replacesPane {
+            // Already what the pane shows
+            guard !isContainedInPath else { return }
+        } else {
+            buttonPressed = true
+            // check for sibling elements and return early if we already have a presented element at this depth
+            guard !hasSiblingElement else { return }
+        }
         Task {
             if configuration.transitionFromSnapshot {
                 initSnapshots()
@@ -398,9 +410,35 @@ public struct FlowLink<Label>: View where Label: View {
             }
 
             if let value = value {
-                withTransaction(transaction) {
-                    path?.wrappedValue.append(value, context: context)
+                if replacesPane, let current = path?.wrappedValue, current.count > 0 {
+                    replacePane(holding: current, with: value)
+                } else {
+                    withTransaction(transaction) {
+                        path?.wrappedValue.append(value, context: context)
+                    }
                 }
+            }
+        }
+    }
+
+    /// Swaps what a split pane holds for `value` in one path write, so the
+    /// count never passes through zero — anything watching it would read
+    /// that as the reader closing the pane. The outgoing view is marked a
+    /// turn earlier so it leaves with a fade beneath the new zoom instead of
+    /// zooming back to its link: a view's removal takes the transition it
+    /// was last drawn with, and two zooms crossing at once read as noise
+    private func replacePane(holding current: FlowPath, with value: any (Equatable & Hashable)) {
+        var marked = current
+        marked.markForReplacement()
+        withTransaction(Transaction(animation: nil)) {
+            path?.wrappedValue = marked
+        }
+        DispatchQueue.main.async {
+            guard var replaced = path?.wrappedValue else { return }
+            replaced.removeLast(replaced.count)
+            replaced.append(value, context: context)
+            withTransaction(transaction) {
+                path?.wrappedValue = replaced
             }
         }
     }
@@ -424,13 +462,15 @@ public struct FlowLink<Label>: View where Label: View {
 
     public var body: some View {
         Group {
-            if isContainedInPath && configuration.animateFromAnchor {
+            // Beside a split pane the link stays in place while its value is
+            // presented — the pane isn't covering it
+            if isContainedInPath && configuration.animateFromAnchor && !replacesPane {
                 Color.clear
                     .frame(width: size?.width, height: size?.height)
             } else {
                 if configuration.animateFromAnchor && overrideAnchor == nil {
                     button
-                        .opacity(isShowing ? 1.0 : 0.0)
+                        .opacity(isShowing || replacesPane ? 1.0 : 0.0)
                     /// (Workaround) Override an animation with an animation that does nothing
                     /// Leaving a flowlayer too early can cause an un-wanted animation
                         .ignoreAnimation()

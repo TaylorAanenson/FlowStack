@@ -243,7 +243,9 @@ class InteractiveDismissCoordinator: NSObject, ObservableObject, UIGestureRecogn
         if panGestureRecognizer.translation(in: scrollView).y > 0 {
             return scrollView.contentOffset.y - 5 <= -scrollView.contentInset.top
         } else {
-            let belowBounds = scrollView.contentOffset.y + UIScreen.main.bounds.height > scrollView.contentSize.height + 20 && swipeUpToDismiss
+            // The scroll view's own height, not the screen's: on a foldable
+            // the screen in hand changes, and a split pane is shorter anyway
+            let belowBounds = scrollView.contentOffset.y + scrollView.bounds.height > scrollView.contentSize.height + 20 && swipeUpToDismiss
             scrollView.isScrollEnabled = !belowBounds
             return belowBounds
         }

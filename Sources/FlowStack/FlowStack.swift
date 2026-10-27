@@ -222,6 +222,14 @@ public struct FlowStack<Root: View, Overlay: View>: View {
     @State private var destinationLookup: DestinationLookup = .init()
     @StateObject var accessibilityManager: AccessibilityManager = .init()
 
+    @Environment(\.flowSplitLeadingWidth) private var splitLeadingWidth
+
+    /// True when presented views go in a trailing pane beside the root
+    /// rather than over it (see `flowSplitPane(leadingWidth:)`)
+    private var isSplit: Bool {
+        (splitLeadingWidth ?? 0) > 0
+    }
+
     /// Creates a flow stack that manages its own navigation state.
     /// - Parameters:
     ///   - overlayAlignment: The alignment applied to the overlay.
@@ -263,7 +271,8 @@ public struct FlowStack<Root: View, Overlay: View>: View {
 
     @ViewBuilder
     private func skrim(for element: FlowElement) -> some View {
-        if element == pathToUse.wrappedValue.elements.last, element.context?.shouldShowSkrim == true {
+        // A split stack keeps its root in view and in use beside the pane
+        if !isSplit, element == pathToUse.wrappedValue.elements.last, element.context?.shouldShowSkrim == true {
             Rectangle()
                 .foregroundColor(Color.black.opacity(0.7))
                 .transition(.opacity)
@@ -300,26 +309,43 @@ public struct FlowStack<Root: View, Overlay: View>: View {
         ZStack {
             root()
                 .accessibilityElement(children: .contain)
-                .accessibilityHidden(accessibilityManager.zIndex != 0)
+                .accessibilityHidden(!isSplit && accessibilityManager.zIndex != 0)
                 .environment(\.flowDepth, 0)
+                .environment(\.flowSplitRoot, isSplit)
 
-            ForEach(pathToUse.wrappedValue.elements, id: \.self) { element in
-                if let destination = destination(for: element.value) {
+            // Presented views get their own stack so a split layout only has
+            // to move this one container into the trailing pane. Split or
+            // not, the structure is the same, so a destination keeps its
+            // identity (scroll position, playing video) when the split turns
+            // on or off under it — a foldable opening or closing
+            ZStack {
+                ForEach(pathToUse.wrappedValue.elements, id: \.self) { element in
+                    if let destination = destination(for: element.value) {
 
-                    skrim(for: element)
+                        skrim(for: element)
 
-                    destination.content(element.value)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        // Structural write on purpose: environment set inside
-                        // the transition modifier never reaches the content,
-                        // so the geometry travels in a shared box instead
-                        .environment(\.flowZoomGeometry, (element.context).map { FlowZoomGeometry(box: $0.zoomGeometryBox) })
-                        .id(element.hashValue)
-                        .transition(.flowTransition(with: element.context ?? .init()))
-                        .modifier(AccessibilityModifier(element: element.index))
+                        destination.content(element.value)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            // Structural write on purpose: environment set inside
+                            // the transition modifier never reaches the content,
+                            // so the geometry travels in a shared box instead
+                            .environment(\.flowZoomGeometry, (element.context).map { FlowZoomGeometry(box: $0.zoomGeometryBox) })
+                            .id(element.hashValue)
+                            .transition(
+                                element.context?.leavesBeneathReplacement == true
+                                    ? .opacity
+                                    : .flowTransition(with: element.context ?? .init())
+                            )
+                            .modifier(AccessibilityModifier(element: element.index))
+                    }
                 }
             }
+            .padding(.leading, isSplit ? splitLeadingWidth ?? 0 : 0)
+            .environment(\.flowSplitPane, isSplit)
         }
+        // A FlowStack presented inside one of these destinations lays out
+        // on its own terms
+        .environment(\.flowSplitLeadingWidth, nil)
         .accessibilityElement(children: .contain)
         .overlay(alignment: overlayAlignment) {
             overlay()
@@ -372,6 +398,69 @@ extension EnvironmentValues {
     var flowTransaction: Transaction {
         get { self[FlowTransactionKey.self] }
         set { self[FlowTransactionKey.self] = newValue }
+    }
+}
+
+struct FlowSplitLeadingWidthKey: EnvironmentKey {
+    static let defaultValue: CGFloat? = nil
+}
+
+struct FlowSplitRootKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+struct FlowSplitPaneKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+extension EnvironmentValues {
+    var flowSplitLeadingWidth: CGFloat? {
+        get { self[FlowSplitLeadingWidthKey.self] }
+        set { self[FlowSplitLeadingWidthKey.self] = newValue }
+    }
+
+    /// True on the root of a split stack, where a flow link opens its value
+    /// in the pane beside it
+    var flowSplitRoot: Bool {
+        get { self[FlowSplitRootKey.self] }
+        set { self[FlowSplitRootKey.self] = newValue }
+    }
+
+    /// True on views presented into a split stack's trailing pane
+    var flowSplitPane: Bool {
+        get { self[FlowSplitPaneKey.self] }
+        set { self[FlowSplitPaneKey.self] = newValue }
+    }
+}
+
+public extension View {
+
+    /// Lays out the flow stack this is applied to as two panes.
+    ///
+    /// The root keeps the stack's full frame — it is responsible for leaving
+    /// the trailing area free, usually with a placeholder for the empty
+    /// pane. Presented views fill the area from `leadingWidth` to the
+    /// trailing edge instead of covering the root, with no skrim, and the
+    /// root stays interactive beside them. A flow link on the root replaces
+    /// whatever the pane holds rather than stacking on it, and stays visible
+    /// while its value is presented.
+    ///
+    /// Pass `nil` (or zero) for the ordinary single-pane stack. Switching
+    /// between the two keeps presented views in place, so a size change —
+    /// a foldable opening or closing — doesn't lose them.
+    ///
+    ///     FlowStack(path: $path) {
+    ///         HStack(spacing: 0) {
+    ///             FeedList().frame(width: 390)
+    ///             ReadingPanePlaceholder()
+    ///         }
+    ///     }
+    ///     .flowSplitPane(leadingWidth: isWide ? 390 : nil)
+    ///
+    /// - Parameter leadingWidth: The width of the root's column, in points
+    ///   from the stack's leading edge.
+    func flowSplitPane(leadingWidth: CGFloat?) -> some View {
+        environment(\.flowSplitLeadingWidth, leadingWidth)
     }
 }
 
