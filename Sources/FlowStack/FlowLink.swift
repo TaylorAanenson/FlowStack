@@ -469,17 +469,32 @@ public struct FlowLink<Label>: View where Label: View {
         }
     }
 
+    /// Presented, and drawn as an empty stand-in while the presentation
+    /// covers it. Beside a split pane the link stays in place while its
+    /// value is presented — the pane isn't covering it
+    private var isCovered: Bool {
+        isContainedInPath && configuration.animateFromAnchor && !replacesPane
+    }
+
     public var body: some View {
-        Group {
-            // Beside a split pane the link stays in place while its value is
-            // presented — the pane isn't covering it
-            if isContainedInPath && configuration.animateFromAnchor && !replacesPane {
-                // At most the link's width, not exactly it: a foldable can
-                // close with this covered, and a column narrower than the
-                // link was would otherwise be pushed wider by its stand-in
-                Color.clear
-                    .frame(minWidth: 0, idealWidth: size?.width, maxWidth: size?.width)
-                    .frame(height: size?.height)
+        laidOutForCover {
+            if isCovered {
+                // As wide as the link would be in the space it's offered now,
+                // which can change under the presentation (a split giving way
+                // to one column, a fold). A link that filled the width it was
+                // offered, a feed's card, fills it; any other stays its own
+                // width, at most what it's offered so a narrower column isn't
+                // pushed wider. Its height follows from the width
+                // (remeasureCovered)
+                if measure.fillsWidth {
+                    Color.clear
+                        .frame(maxWidth: .infinity)
+                        .frame(height: size?.height)
+                } else {
+                    Color.clear
+                        .frame(minWidth: 0, idealWidth: size?.width, maxWidth: size?.width)
+                        .frame(height: size?.height)
+                }
             } else {
                 if configuration.animateFromAnchor && overrideAnchor == nil {
                     button
@@ -503,9 +518,7 @@ public struct FlowLink<Label>: View where Label: View {
                 // Every layout of the link, whatever onChange makes of it.
                 // Only the link itself: a covered link's stand-in is sized
                 // from what's recorded here
-                let _ = isContainedInPath && configuration.animateFromAnchor && !replacesPane
-                    ? ()
-                    : measure.record(proxy.size)
+                let _ = isCovered ? () : measure.record(proxy.size)
                 Color.clear
                     .onAppear {
                         if let anchor = context?.anchor {
@@ -529,6 +542,16 @@ public struct FlowLink<Label>: View where Label: View {
         )
         .onChange(of: path?.wrappedValue.count) { _ in
             handleFlowLinkOpacity()
+        }
+        // A link presented beside a split pane is never hidden for the
+        // presentation, which doesn't cover it. Covered now, the split given
+        // way to one column, it hides through the close like any other link,
+        // or it shows at full size under the presentation closing into it.
+        // Not on a tap of its own, which handleFlowLinkOpacity hides
+        .onChange(of: isCovered) { covered in
+            if covered && !buttonPressed {
+                isShowing = false
+            }
         }
         .anchorPreference(key: PathContextKey.self, value: .bounds, transform: { anchor in
             return PathContext(
@@ -572,6 +595,53 @@ public struct FlowLink<Label>: View where Label: View {
     private func reportToPresentation() {
         guard configuration.animateFromAnchor, let box = presentation else { return }
         box.anchors = .init(anchor: context?.anchor, overrideFrame: overrideFrame)
+    }
+
+    /// The link's content in a layout that notes how it's laid out
+    /// (LinkLayout): whether the link fills the width it's offered, when
+    /// it's drawn at a size other than the one it has, and, while it's
+    /// covered, when its stand-in has been laid out at a width the link
+    /// wasn't measured at
+    @ViewBuilder
+    private func laidOutForCover<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+        if #available(iOS 16.0, *) {
+            LinkLayout(
+                measure: measure,
+                covered: isCovered,
+                measuredSize: size,
+                coveredWidthChanged: remeasureCovered,
+                drawnSizeChanged: { resized(to: $0, overrideFrame: nil) }
+            ) {
+                content()
+            }
+        } else {
+            content()
+        }
+    }
+
+    /// The covered link's stand-in laid out at a width the link wasn't
+    /// measured at. The link isn't drawn to say how tall it would be there,
+    /// or what it would look like, so its label is measured offscreen at
+    /// that width, the stand-in takes the height, and the presentation gets
+    /// snapshots of it to close into
+    private func remeasureCovered(at width: CGFloat) {
+        guard let measured = measureLabel(width: width) else { return }
+        resized(to: measured, overrideFrame: nil)
+    }
+
+    /// The label's size at `width`, laid out offscreen as the snapshot is
+    private func measureLabel(width: CGFloat) -> CGSize? {
+        var environment = fetchedEnvironment
+        environment.flowSnapshotRender = true
+        let controller = UIHostingController(
+            rootView: label()
+                .environment(\.self, environment)
+                .environment(\.opacityTransitionPercent, 1)
+                .ignoresSafeArea()
+        )
+        let fitted = controller.sizeThatFits(in: CGSize(width: width, height: .greatestFiniteMagnitude))
+        guard fitted.width.isFinite, fitted.height.isFinite, fitted.width > 0, fitted.height > 0 else { return nil }
+        return CGSize(width: min(fitted.width, width), height: fitted.height)
     }
 
     /// The link laid out at a new size: a fold or a rotation, or its content
@@ -619,6 +689,56 @@ public struct FlowLink<Label>: View where Label: View {
     }
 }
 
+/// Passes its one subview through untouched, noting how the link is laid
+/// out. Drawn, it records whether the link fills the width it's offered,
+/// which is what its stand-in does when covered, and reports a size other
+/// than the one the link has: its geometry onChange misses some, and a
+/// link beside a split pane that changed size under its presentation then
+/// closed into a snapshot of the old shape. Covered, it reports a stand-in
+/// placed at a width the link wasn't measured at. Placement, not sizing,
+/// which a stack also asks with trial widths. A drawn link's size never
+/// depends on what's reported, and a stand-in's width doesn't either, only
+/// its height, so this settles
+@available(iOS 16.0, *)
+struct LinkLayout: Layout {
+    let measure: LinkMeasure
+    let covered: Bool
+    /// The size the link has (its size state)
+    let measuredSize: CGSize?
+    /// These are called a turn later, out of the layout pass
+    let coveredWidthChanged: (CGFloat) -> Void
+    let drawnSizeChanged: (CGSize) -> Void
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        subviews.first?.sizeThatFits(proposal) ?? .zero
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        subviews.first?.place(at: bounds.origin, proposal: proposal)
+        let width = bounds.width
+        guard width.isFinite, width > 0 else { return }
+        guard let measuredSize else { return }
+        if covered {
+            guard abs(width - measuredSize.width) >= 0.5, measure.pendingWidth != width else { return }
+            measure.pendingWidth = width
+            DispatchQueue.main.async { coveredWidthChanged(width) }
+        } else {
+            measure.pendingWidth = nil
+            if let offered = proposal.width, offered.isFinite {
+                measure.fillsWidth = abs(offered - width) < 0.5
+            } else {
+                measure.fillsWidth = false
+            }
+            let drawn = bounds.size
+            guard drawn.height.isFinite, drawn.height > 0,
+                  abs(drawn.width - measuredSize.width) >= 0.5 || abs(drawn.height - measuredSize.height) >= 0.5,
+                  measure.pendingDrawn != drawn else { return }
+            measure.pendingDrawn = drawn
+            DispatchQueue.main.async { drawnSizeChanged(drawn) }
+        }
+    }
+}
+
 /// A link's size as it was last laid out, recorded as its geometry is read.
 /// The size state is kept by an onChange of the same geometry, which can
 /// miss a change: on a foldable's open screen turned upright, the link
@@ -630,6 +750,13 @@ final class LinkMeasure {
     var size: CGSize?
     /// What the link's snapshots were taken at
     var snapshotSize: CGSize?
+    /// Whether the link took the whole width it was offered when last
+    /// drawn (LinkLayout)
+    var fillsWidth = false
+    /// A covered link's width being measured (LinkLayout)
+    var pendingWidth: CGFloat?
+    /// A drawn link's size being taken up (LinkLayout)
+    var pendingDrawn: CGSize?
 
     func record(_ size: CGSize) {
         guard size.width > 0, size.height > 0 else { return }
