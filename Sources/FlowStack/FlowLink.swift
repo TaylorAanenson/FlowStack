@@ -287,6 +287,7 @@ public struct FlowLink<Label>: View where Label: View {
     @State var environmentList: [EnvironmentValues] = []
     @State private var snapshots: [ColorScheme: UIImage] = [:]
     @State private var environment = EnvironmentValues()
+    @State private var measure = LinkMeasure()
 
     /// Creates a flow link that presents the view corresponding to a value.
     ///
@@ -402,11 +403,19 @@ public struct FlowLink<Label>: View where Label: View {
             // check for sibling elements and return early if we already have a presented element at this depth
             guard !hasSiblingElement else { return }
         }
+        // The link as it's laid out now, not as the size state last heard:
+        // a size change can slip past it (see LinkMeasure), and a snapshot
+        // and stand-in of the old size close the presentation into a link
+        // that isn't there
+        let linkSize = measure.size ?? size
+        if let linkSize, linkSize != size {
+            size = linkSize
+        }
         Task {
             if configuration.transitionFromSnapshot {
-                initSnapshots()
-                self.context?.snapshotDict = snapshots
-                self.context?.snapshot = snapshots[colorScheme]
+                let taken = initSnapshots(at: linkSize)
+                self.context?.snapshotDict = taken
+                self.context?.snapshot = taken[colorScheme]
             }
 
             if let value = value {
@@ -491,6 +500,12 @@ public struct FlowLink<Label>: View where Label: View {
         }
         .background(
             GeometryReader { proxy in
+                // Every layout of the link, whatever onChange makes of it.
+                // Only the link itself: a covered link's stand-in is sized
+                // from what's recorded here
+                let _ = isContainedInPath && configuration.animateFromAnchor && !replacesPane
+                    ? ()
+                    : measure.record(proxy.size)
                 Color.clear
                     .onAppear {
                         if let anchor = context?.anchor {
@@ -589,12 +604,36 @@ public struct FlowLink<Label>: View where Label: View {
         }
     }
 
-    private func initSnapshots() {
-        guard snapshots.isEmpty || configuration.retakeSnapshots else { return }
-        let lightImage = createSnapshot(colorScheme: .light)
-        let darkImage = createSnapshot(colorScheme: .dark)
-        self.snapshots[.light] = lightImage
-        self.snapshots[.dark] = darkImage
+    /// The snapshots for a presentation from the link at `linkSize`: the
+    /// ones already taken if they're of that size, else new ones
+    private func initSnapshots(at linkSize: CGSize?) -> [ColorScheme: UIImage] {
+        guard snapshots.isEmpty || configuration.retakeSnapshots || measure.snapshotSize != linkSize else {
+            return snapshots
+        }
+        var taken: [ColorScheme: UIImage] = [:]
+        taken[.light] = createSnapshot(colorScheme: .light, size: linkSize)
+        taken[.dark] = createSnapshot(colorScheme: .dark, size: linkSize)
+        self.snapshots = taken
+        measure.snapshotSize = linkSize
+        return taken
+    }
+}
+
+/// A link's size as it was last laid out, recorded as its geometry is read.
+/// The size state is kept by an onChange of the same geometry, which can
+/// miss a change: on a foldable's open screen turned upright, the link
+/// widened from a split's column to the whole screen without it hearing,
+/// then snapshotted itself and stood in at the old width, and the
+/// presentation closed into a box narrower than the link.
+/// A reference, so recording it during layout isn't a state change.
+final class LinkMeasure {
+    var size: CGSize?
+    /// What the link's snapshots were taken at
+    var snapshotSize: CGSize?
+
+    func record(_ size: CGSize) {
+        guard size.width > 0, size.height > 0 else { return }
+        self.size = size
     }
 }
 
