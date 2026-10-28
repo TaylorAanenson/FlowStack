@@ -172,7 +172,26 @@ extension AnyTransition {
         @Environment(\.flowSplitPane) var inSplitPane
 
         private var activeSnapshot: UIImage? {
-            context.snapshotDict[colorScheme] ?? context.snapshot
+            context.liveLink.snapshotDict[colorScheme] ?? context.snapshotDict[colorScheme] ?? context.snapshot
+        }
+
+        /// What the zoom collapses onto: the link as it is now, if it's
+        /// reported in since the tap (a link beside a split pane can move),
+        /// else as it was at the tap. Read as the zoom renders, so a close
+        /// goes to wherever the link has got to
+        private func linkRect(in proxy: GeometryProxy) -> CGRect? {
+            if let live = context.liveLink.anchors, let anchor = live.anchor {
+                let link = proxy[anchor]
+                if let frame = live.overrideFrame {
+                    return frame.offsetBy(dx: link.minX, dy: link.minY)
+                }
+                // A link zooming from part of itself, with that part not
+                // measured: as it was at the tap, rather than the whole link
+                if context.overrideAnchor == nil {
+                    return link
+                }
+            }
+            return (context.overrideAnchor ?? context.anchor).map { proxy[$0] }
         }
 
         var cornerRadius: CGFloat { context.cornerRadius + ((UIScreen.displayCornerRadius ?? 20) - context.cornerRadius) * percent }
@@ -206,10 +225,10 @@ extension AnyTransition {
             set { percent = newValue }
         }
 
-        func zoomRect(with proxy: GeometryProxy, anchor: Anchor<CGRect>?, percent: CGFloat, pullOffset: CGPoint?) -> CGRect {
+        func zoomRect(with proxy: GeometryProxy, linkRect: CGRect?, percent: CGFloat, pullOffset: CGPoint?) -> CGRect {
             let rect: CGRect
-            if let anchor = anchor {
-                rect = proxy[anchor]
+            if let linkRect {
+                rect = linkRect
             } else {
                 rect = proxy.frame(in: .global)
                     .insetBy(dx: 50, dy: 100)
@@ -247,7 +266,7 @@ extension AnyTransition {
 
         func body(content: Content) -> some View {
             GeometryReader { proxy in
-                let zoomRect = zoomRect(with: proxy, anchor: context.overrideAnchor ?? context.anchor, percent: percent, pullOffset: panOffset)
+                let zoomRect = zoomRect(with: proxy, linkRect: linkRect(in: proxy), percent: percent, pullOffset: panOffset)
                 let scaleRatio = context.shouldScaleHorizontally ? zoomRect.size.width / proxy.size.width : 1.0
 
                 // Deposit the live percent where the destination can reach

@@ -51,6 +51,41 @@ struct PathContext: Equatable, Hashable {
     /// Set on a split pane's presentation that's about to be replaced: it
     /// fades under its successor instead of zooming back to its link
     var leavesBeneathReplacement: Bool = false
+
+    /// Where the link is now, while this is presented (see LiveLinkBox)
+    var liveLink = LiveLinkBox()
+}
+
+/// The link a presentation zooms back into, as it is now rather than as it
+/// was at the tap. The anchor and snapshot above are taken when the link is
+/// tapped, which only holds while the presentation covers the link: beside
+/// a split pane the list stays in use, so the link can scroll, or be laid
+/// out wider when the screen opens out, before the presentation closes.
+/// The link writes here while its value is presented. Shared by every copy
+/// of the context, like ZoomGeometryBox, so those writes need no path write.
+final class LiveLinkBox: Equatable, Hashable {
+    struct Anchors {
+        /// The link's bounds
+        var anchor: Anchor<CGRect>?
+        /// Where its `flowAnimationAnchor` sits inside those bounds. Kept as
+        /// a frame in the link, not an anchor: a link covered by its
+        /// presentation is drawn as an empty stand-in, which has no
+        /// animation anchor in it, while the link's own bounds still move
+        var overrideFrame: CGRect?
+    }
+
+    /// Nil until the link reports in after presenting
+    var anchors: Anchors?
+    /// Retaken when the link changes size; empty until then
+    var snapshotDict: [ColorScheme: UIImage] = [:]
+
+    static func == (lhs: LiveLinkBox, rhs: LiveLinkBox) -> Bool {
+        lhs === rhs
+    }
+
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(ObjectIdentifier(self))
+    }
 }
 
 struct FlowElement: Equatable, Hashable {
@@ -89,7 +124,13 @@ public struct FlowPath: Equatable, Hashable {
     }
 
     func contains<P>(_ element: P, atLevel level: Int?) -> Bool where P: Hashable {
-        return elements.contains { $0 == FlowElement(value: element, context: $0.context, index: level ?? $0.index) }
+        return self.element(presenting: element, atLevel: level) != nil
+    }
+
+    /// The element presenting `value` from a link at `level` (any level
+    /// when nil)
+    func element<P>(presenting value: P, atLevel level: Int?) -> FlowElement? where P: Hashable {
+        elements.last { $0 == FlowElement(value: value, context: $0.context, index: level ?? $0.index) }
     }
 
     /// Removes the specified number of elements from the end of the flow path.

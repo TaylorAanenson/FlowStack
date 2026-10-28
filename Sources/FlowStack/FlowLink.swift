@@ -325,8 +325,8 @@ public struct FlowLink<Label>: View where Label: View {
         return path?.wrappedValue.elements.map(\.context?.linkDepth).contains(flowDepth) ?? false
     }
 
-    private func createSnapshot(colorScheme: ColorScheme) -> UIImage? {
-        guard let size = size else { return nil }
+    private func createSnapshot(colorScheme: ColorScheme, size: CGSize? = nil) -> UIImage? {
+        guard let size = size ?? self.size else { return nil }
 
         let frame = CGRect(origin: .zero, size: size)
         environment = fetchedEnvironment
@@ -465,8 +465,12 @@ public struct FlowLink<Label>: View where Label: View {
             // Beside a split pane the link stays in place while its value is
             // presented — the pane isn't covering it
             if isContainedInPath && configuration.animateFromAnchor && !replacesPane {
+                // At most the link's width, not exactly it: a foldable can
+                // close with this covered, and a column narrower than the
+                // link was would otherwise be pushed wider by its stand-in
                 Color.clear
-                    .frame(width: size?.width, height: size?.height)
+                    .frame(minWidth: 0, idealWidth: size?.width, maxWidth: size?.width)
+                    .frame(height: size?.height)
             } else {
                 if configuration.animateFromAnchor && overrideAnchor == nil {
                     button
@@ -496,6 +500,16 @@ public struct FlowLink<Label>: View where Label: View {
                             overrideFrame = proxy[overrideAnchor]
                         }
                     }
+                    .onChange(of: proxy.size) { newSize in
+                        resized(to: newSize, overrideFrame: overrideAnchor.map { proxy[$0] })
+                    }
+                    // Kept through the stand-in drawn while covered, which
+                    // has no animation anchor (see LiveLinkBox.Anchors)
+                    .onChange(of: overrideAnchor) { anchor in
+                        if let anchor, proxy[anchor] != overrideFrame {
+                            overrideFrame = proxy[anchor]
+                        }
+                    }
             }
         )
         .onChange(of: path?.wrappedValue.count) { _ in
@@ -520,10 +534,47 @@ public struct FlowLink<Label>: View where Label: View {
         })
         .onPreferenceChange(PathContextKey.self) { value in
             context = value
+            reportToPresentation()
         }
         .onPreferenceChange(AnimationAnchorKey.self) { anchor in
             overrideAnchor = anchor.first
             context?.overrideAnchor = overrideAnchor
+            reportToPresentation()
+        }
+    }
+
+    /// The live box of the presentation this link's value is showing in,
+    /// if it is (see LiveLinkBox)
+    private var presentation: LiveLinkBox? {
+        guard let value else { return nil }
+        let depth = flowDepth == -1 ? nil : flowDepth
+        return path?.wrappedValue.element(presenting: value, atLevel: depth)?.context?.liveLink
+    }
+
+    /// While this link's value is presented, keeps the presentation's idea
+    /// of where the link is current, so it closes into the link where it is
+    /// now. A reference write: the path and the presentation don't re-render
+    private func reportToPresentation() {
+        guard configuration.animateFromAnchor, let box = presentation else { return }
+        box.anchors = .init(anchor: context?.anchor, overrideFrame: overrideFrame)
+    }
+
+    /// The link laid out at a new size: a fold or a rotation, or its content
+    /// changing. The snapshots were of the old size, so the next tap takes
+    /// new ones, and a presentation showing now gets new ones to close into
+    private func resized(to newSize: CGSize, overrideFrame newOverrideFrame: CGRect?) {
+        guard size != nil, newSize != size, newSize.width > 0, newSize.height > 0 else { return }
+        size = newSize
+        if let newOverrideFrame { overrideFrame = newOverrideFrame }
+        snapshots = [:]
+        guard configuration.transitionFromSnapshot, let box = presentation else { return }
+        // Out of the layout pass that reported the size: rendering the
+        // label offscreen here would run SwiftUI inside its own update
+        Task { @MainActor in
+            var retaken: [ColorScheme: UIImage] = [:]
+            retaken[.light] = createSnapshot(colorScheme: .light, size: newSize)
+            retaken[.dark] = createSnapshot(colorScheme: .dark, size: newSize)
+            box.snapshotDict = retaken
         }
     }
 
