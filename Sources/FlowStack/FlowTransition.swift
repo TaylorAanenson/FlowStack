@@ -322,10 +322,12 @@ extension AnyTransition {
                     )
                     .opacity(context.anchor == nil ? percent : 1)
             }
-            // In a split pane the trailing side is where bars and the status
-            // bar stand on a wide display (a foldable's inner screen), so
-            // the pane stops at them instead of running underneath
-            .ignoresSafeArea(.container, edges: inSplitPane ? .vertical : .all)
+            // A split pane runs under the bars at the screen's edge as a view
+            // covering the stack does. On a foldable's inner screen the tab
+            // bar and status bar stand down the trailing side beside the
+            // pane: the destination's background washes under them, as it
+            // does on the folded screen, and its content keeps their inset
+            .ignoresSafeArea(.container, edges: .all)
         }
     }
 }

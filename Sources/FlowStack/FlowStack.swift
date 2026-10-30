@@ -440,7 +440,8 @@ public extension View {
     /// The root keeps the stack's full frame — it is responsible for leaving
     /// the trailing area free, usually with a placeholder for the empty
     /// pane. Presented views fill the area from `leadingWidth` to the
-    /// trailing edge instead of covering the root, with no skrim, and the
+    /// trailing edge instead of covering the root, running under any bars
+    /// that stand there as a covering view does, with no skrim, and the
     /// root stays interactive beside them. A flow link on the root replaces
     /// whatever the pane holds rather than stacking on it, and stays visible
     /// while its value is presented.
