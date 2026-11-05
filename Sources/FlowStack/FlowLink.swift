@@ -713,6 +713,23 @@ struct LinkLayout: Layout {
         subviews.first?.sizeThatFits(proposal) ?? .zero
     }
 
+    // The label's own guides, read off its dimensions. Left to the default,
+    // a guide is found by placing the label, so a stack sizing itself (a
+    // fixedSize row asking for .top) ran placeSubviews at its trial size.
+    // A label that stretches to its row, a "+N See All" tile as tall as the
+    // cards beside it, then reported two sizes every layout, its trial
+    // height and its drawn one, and each report re-rendered the link into
+    // the next: a loop that held the main thread for as long as it showed
+    func explicitAlignment(of guide: HorizontalAlignment, in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGFloat? {
+        guard let label = subviews.first, let value = label.dimensions(in: proposal)[explicit: guide] else { return nil }
+        return bounds.minX + value
+    }
+
+    func explicitAlignment(of guide: VerticalAlignment, in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGFloat? {
+        guard let label = subviews.first, let value = label.dimensions(in: proposal)[explicit: guide] else { return nil }
+        return bounds.minY + value
+    }
+
     func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
         subviews.first?.place(at: bounds.origin, proposal: proposal)
         let width = bounds.width
