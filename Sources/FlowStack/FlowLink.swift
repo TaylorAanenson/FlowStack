@@ -276,7 +276,11 @@ public struct FlowLink<Label>: View where Label: View {
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.self) private var fetchedEnvironment
 
-    @State private var overrideAnchor: Anchor<CGRect>?
+    /// Whether the label marks a view of its own to animate from
+    /// (flowAnimationAnchor). The anchor itself is kept in `measure`, not
+    /// in state: it changes whenever the link moves on screen, every frame
+    /// of a scroll, and as state each change redrew the link and its label
+    @State private var hasOverrideAnchor = false
 
     @State private var size: CGSize?
     @State private var overrideFrame: CGRect?
@@ -496,7 +500,7 @@ public struct FlowLink<Label>: View where Label: View {
                         .frame(height: size?.height)
                 }
             } else {
-                if configuration.animateFromAnchor && overrideAnchor == nil {
+                if configuration.animateFromAnchor && !hasOverrideAnchor {
                     button
                         .opacity(isShowing || replacesPane ? 1.0 : 0.0)
                     /// (Workaround) Override an animation with an animation that does nothing
@@ -519,24 +523,20 @@ public struct FlowLink<Label>: View where Label: View {
                 // Only the link itself: a covered link's stand-in is sized
                 // from what's recorded here
                 let _ = isCovered ? () : measure.record(proxy.size)
+                // For the animation anchor's frame in the link, read as the
+                // anchor changes (noteOverrideAnchor)
+                let _ = measure.proxy = proxy
                 Color.clear
                     .onAppear {
                         if let anchor = context?.anchor {
                             size = proxy[anchor].size
                         }
-                        if let overrideAnchor = overrideAnchor {
+                        if let overrideAnchor = measure.overrideAnchor {
                             overrideFrame = proxy[overrideAnchor]
                         }
                     }
                     .onChange(of: proxy.size) { newSize in
-                        resized(to: newSize, overrideFrame: overrideAnchor.map { proxy[$0] })
-                    }
-                    // Kept through the stand-in drawn while covered, which
-                    // has no animation anchor (see LiveLinkBox.Anchors)
-                    .onChange(of: overrideAnchor) { anchor in
-                        if let anchor, proxy[anchor] != overrideFrame {
-                            overrideFrame = proxy[anchor]
-                        }
+                        resized(to: newSize, overrideFrame: measure.overrideAnchor.map { proxy[$0] })
                     }
             }
         )
@@ -556,7 +556,7 @@ public struct FlowLink<Label>: View where Label: View {
         .anchorPreference(key: PathContextKey.self, value: .bounds, transform: { anchor in
             return PathContext(
                 anchor: configuration.animateFromAnchor ? anchor : nil,
-                overrideAnchor: configuration.animateFromAnchor ? overrideAnchor : nil,
+                overrideAnchor: configuration.animateFromAnchor ? measure.overrideAnchor : nil,
                 snapshot: configuration.animateFromAnchor && configuration.transitionFromSnapshot ? snapshots[colorScheme] : nil,
                 snapshotDict: snapshots,
                 linkDepth: flowDepth,
@@ -572,12 +572,35 @@ public struct FlowLink<Label>: View where Label: View {
         })
         .onPreferenceChange(PathContextKey.self) { value in
             context = value
+            // The anchor as last heard, whichever of the two preferences
+            // lands first in an update
+            if configuration.animateFromAnchor {
+                context?.overrideAnchor = measure.overrideAnchor
+            }
             reportToPresentation()
         }
         .onPreferenceChange(AnimationAnchorKey.self) { anchor in
-            overrideAnchor = anchor.first
-            context?.overrideAnchor = overrideAnchor
+            noteOverrideAnchor(anchor.first)
             reportToPresentation()
+        }
+    }
+
+    /// The label's animation anchor, which is a new value whenever the link
+    /// moves on screen. Only what a redraw needs is state: whether there is
+    /// one, and its frame in the link, which a scroll doesn't change. The
+    /// frame is kept through the stand-in drawn while covered, which has no
+    /// animation anchor (see LiveLinkBox.Anchors)
+    private func noteOverrideAnchor(_ anchor: Anchor<CGRect>?) {
+        measure.overrideAnchor = anchor
+        context?.overrideAnchor = configuration.animateFromAnchor ? anchor : nil
+        if hasOverrideAnchor != (anchor != nil) {
+            hasOverrideAnchor = anchor != nil
+        }
+        if let anchor, let proxy = measure.proxy {
+            let frame = proxy[anchor]
+            if frame != overrideFrame {
+                overrideFrame = frame
+            }
         }
     }
 
@@ -774,6 +797,10 @@ final class LinkMeasure {
     var pendingWidth: CGFloat?
     /// A drawn link's size being taken up (LinkLayout)
     var pendingDrawn: CGSize?
+    /// The label's animation anchor (flowAnimationAnchor), if it has one
+    var overrideAnchor: Anchor<CGRect>?
+    /// The link's geometry, to place that anchor in it
+    var proxy: GeometryProxy?
 
     func record(_ size: CGSize) {
         guard size.width > 0, size.height > 0 else { return }
