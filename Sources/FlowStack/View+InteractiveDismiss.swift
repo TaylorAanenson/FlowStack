@@ -20,6 +20,18 @@ extension UIView {
     }
 }
 
+extension UIScrollView {
+    /// Whether the content rests at its top, within a few points. The resting
+    /// offset is the adjusted inset, which counts the safe area and any bars
+    /// the page adds to it. Against `contentInset` alone (zero for a SwiftUI
+    /// scroll view) a page scrolled by less than the height of its top bars
+    /// still read as at the top, so dragging it back down closed the page
+    /// instead of scrolling it.
+    var isAtTop: Bool {
+        contentOffset.y - 5 <= -adjustedContentInset.top
+    }
+}
+
 struct InteractiveDismissDisabledKey: PreferenceKey {
     static var defaultValue: Bool = false
 
@@ -241,7 +253,7 @@ class InteractiveDismissCoordinator: NSObject, ObservableObject, UIGestureRecogn
         guard gestureRecognizer == panGestureRecognizer else { return true }
 
         if panGestureRecognizer.translation(in: scrollView).y > 0 {
-            return scrollView.contentOffset.y - 5 <= -scrollView.contentInset.top
+            return scrollView.isAtTop
         } else {
             // The scroll view's own height, not the screen's: on a foldable
             // the screen in hand changes, and a split pane is shorter anyway
@@ -264,7 +276,7 @@ class InteractiveDismissCoordinator: NSObject, ObservableObject, UIGestureRecogn
         let hasEdgeTranslation = edgeGestureRecognizer.translation(in: view).x > 0
 
         guard otherGestureRecognizer.view?.isKind(of: UIScrollView.self) ?? false else { return false }
-        guard scrollView.contentOffset.y - 5 <= -scrollView.contentInset.top || hasEdgeTranslation else { return true }
+        guard scrollView.isAtTop || hasEdgeTranslation else { return true }
 
         let shouldDisableScroll = (panGestureRecognizer.translation(in: scrollView).y > 0 || hasEdgeTranslation)
 
@@ -279,7 +291,7 @@ class InteractiveDismissCoordinator: NSObject, ObservableObject, UIGestureRecogn
         view?.isUserInteractionEnabled = false
         if let scrollView = scrollView {
             UIView.animate(withDuration: 0.2) {
-                scrollView.contentOffset = .init(x: scrollView.contentOffset.x, y: -scrollView.contentInset.top)
+                scrollView.contentOffset = .init(x: scrollView.contentOffset.x, y: -scrollView.adjustedContentInset.top)
             }
         }
     }
